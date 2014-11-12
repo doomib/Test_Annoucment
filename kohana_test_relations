@@ -1,0 +1,36 @@
+Model_Announcement
+[php]
+protected $_table_name = 'announcements';
+	
+	protected $_primary_key = 'annoucement_id';
+	protected $_primary_val = 'annoucement_title';
+
+	protected $_belongs_to = array(
+		//'main_category'	 => array('model' => 'Announcements_Categories', 'foreign_key' => 'main_category_id'),
+		'last_category'	  => array('model' => 'Announcement_Category', 'foreign_key' => 'category_id'),
+		'user'			  => array('model' => 'User', 'foreign_key' => 'user_id'),
+		'user_closet'	   => array('model' => 'User', 'through' => 'Announcements_To_Users', 'foreign_key' => 'user_id'),
+		'catalog_company'   => array('model' => 'Catalog_Company', 'foreign_key' => 'company_id')
+	);
+	[/php]
+	Model_User
+	[php]
+	protected $_table_name = 'users';
+	protected $_primary_key = 'user_id';
+	protected $_primary_val = 'user_name';
+
+	protected $_has_many = array(
+		 'announcements' => array('model' => 'Announcement', 'foreign_key' => 'user_id'),  
+	);
+	[/php]
+	Show.php
+	[php]
+	<?php
+$annoucements = ORM::factory('announcement')->find_all();
+ 
+foreach($annoucements as $a)
+{
+echo $a->users->user_name;
+}
+						?>
+	[/php]
