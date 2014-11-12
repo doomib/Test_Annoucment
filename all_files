@@ -1,0 +1,263 @@
+------------------ Model Annoucement ------------------------
+<?php defined('SYSPATH') or die('No direct script access.');
+
+class Model_Announcement extends ORM implements IEmailMessageReceiver {
+
+	const DISTINCTION_NONE = 1;
+	const DISTINCTION_PREMIUM = 2;
+	const DISTINCTION_PREMIUM_PLUS = 3;
+	const DISTINCTION_DISTINCTION = 4;
+	
+	const PRODUCT_STATE_NEW = 1;
+	const PRODUCT_STATE_USED = 2;
+
+	protected $_table_name = 'announcements';
+	
+	protected $_primary_key = 'annoucement_id';
+	protected $_primary_val = 'annoucement_title';
+
+	protected $_belongs_to = array(
+	
+		'user'			  => array('model' => 'User', 'foreign_key' => 'user_id'),
+		
+	);
+
+	protected $_has_many = array(
+		'images'		=> array('model' => 'Image', 'foreign_key' => 'object_id'),
+		'categories'	=> array('model' => 'Announcement_Category', 'through' => 'announcements_to_categories', 'foreign_key' => 'announcement_id'),
+		'attributes'	=> array('model' => 'Announcement_Attribute'),
+	);
+	
+
+	protected $_created_column = array(
+		'column' => 'annoucement_date_added',
+		'format' => 'Y-m-d H:i:s',
+		
+	);
+
+	protected $_updated_column = array(
+		'column' => 'announcement_date_updated',
+		'format' => 'Y-m-d H:i:s',
+	);
+	
+	protected $_contact_data = NULL;
+
+	public function is_distinct()
+	{
+		return $this->annoucement_distinction == self::DISTINCTION_DISTINCTION;
+	}
+
+	public function dig_up($point)
+	{
+		$points = announcements::dig_up_points();
+
+		if(isset($points[$point]))
+		{
+			return ORM::factory('Announcement_Point')
+				->add_points($this, $points[$point]);
+		}
+
+		return FALSE;
+	}
+	
+	public function has_category()
+	{
+		return $this->category_id && $this->last_category->loaded();
+	}
+
+	public function get_last_category()
+	{
+		return $this->last_category;
+	}
+
+	public function get_attributes($not_empty = FALSE)
+	{
+		$model = new Model_Announcement_Attribute;
+
+		if($not_empty)
+		{
+			$model->filter_by_not_empty();
+		}
+
+		return $model->find_for_announcement($this);
+	}
+
+	public function contact_data()
+	{
+		if(!$this->loaded())
+		{
+			return NULL;
+		}
+		
+		if($this->_contact_data)
+		{
+			return $this->_contact_data;
+		}
+		
+		if($company = $this->get_company())
+		{
+			$this->_contact_data = $company->get_contact();
+		}
+		else
+		{
+			$this->_contact_data = Contact::factory($this->annoucement_person_type ? $this->annoucement_person_type : Contact::TYPE_PERSON);
+			$this->_contact_data->name = $this->annoucement_person;
+			$this->_contact_data->phone = $this->annoucement_telephone;
+			$this->_contact_data->email = $this->get_email_address();
+			$this->_contact_data->www = $this->annoucement_www;
+
+			$address = new Address();
+			$address->province = announcements::province_to_text($this->province_select);
+			$address->county = Regions::county($this->announcement_county);
+			$address->postal_code = $this->announcement_postal_code;
+			$address->city = $this->annoucement_city;
+			$address->street = $this->annoucement_street;
+			
+			$this->_contact_data->address = $address;
+		}
+		
+		return $this->_contact_data;
+	}
+	
+	public function has_company()
+	{
+		return Modules::enabled('site_catalog') AND $this->company_id AND $this->catalog_company->loaded();
+	}
+	
+	public function get_company()
+	{
+		return $this->has_company() ? $this->catalog_company : NULL;
+	}
+
+	public function prev()
+	{
+		$prev = self::factory($this->_object_name)
+				->add_active_conditions()
+				->join('announcements_to_categories', 'RIGHT')->on('announcement.annoucement_id', '=', 'announcements_to_categories.announcement_id')
+				->where('announcement.annoucement_id', '<', $this->annoucement_id)
+				->where('announcements_to_categories.category_id', '=', $this->get_last_category()->category_id)
+				->order_by('announcement.annoucement_id', 'DESC')
+				->find();
+
+		if ($prev->loaded())
+		{
+			return $prev;
+		}
+
+		return FALSE;
+	}
+
+	public function next()
+	{
+		$next = self::factory($this->_object_name)
+				->add_active_conditions()
+				->join('announcements_to_categories', 'RIGHT')->on('announcement.annoucement_id', '=', 'announcements_to_categories.announcement_id')
+				->where('announcement.annoucement_id', '>', $this->annoucement_id)
+				->where('announcements_to_categories.category_id', '=', $this->get_last_category()->category_id)
+				->order_by('announcement.annoucement_id', 'ASC')
+				->find();
+
+		if ($next->loaded())
+		{
+			return $next;
+		}
+		return FALSE;
+	}
+
+	public function add_to_closet($user_id) {
+		$values['user_id'] = $user_id;
+		$values['annoucement_id'] = $this->annoucement_id;
+
+		$count = ORM::factory('Announcement_To_User')->where('user_id', '=', $values['user_id'])->where('annoucement_id', '=', $values['annoucement_id'])->count_all();
+
+		if ($count) {
+			return;
+		}
+
+		$relation = ORM::factory('Announcement_To_User')->values($values)->save();
+	}
+
+
+}
+---------------------koniec modelu----------------------------------------
+--------------------model user ------------------------------------------
+<?php defined('SYSPATH') or die('No direct script access.');
+
+class Model_User extends ORM implements IEmailMessageReceiver {
+
+	const STATUS_NOT_ACTIVE 	= 0;
+	const STATUS_ACTIVE 		= 1;
+	const STATUS_BANNED 		= 2;
+	const STATUS_DELETED 		= 3;
+
+	protected $_table_name = 'users';
+	protected $_primary_key = 'user_id';
+	protected $_primary_val = 'user_name';
+
+	protected $_has_many = array(
+		 'announcements' => array('model' => 'annoucement', 'foreign_key' => 'user_id'),  
+	);
+
+	protected $_contact_data = NULL;
+	
+	public function contact_data()
+	{
+		if(!$this->loaded() OR !$this->data->loaded())
+		{
+			return NULL;
+		}
+		
+		if($this->_contact_data)
+		{
+			return $this->_contact_data;
+		}
+		
+		$this->_contact_data = Contact::factory($this->data->users_data_person_type == 'company' ? 'company' : 'person');
+		$this->_contact_data->name = $this->data->users_data_person;
+		$this->_contact_data->phone = $this->data->users_data_telephone;
+		$this->_contact_data->email = $this->get_email_address();
+		$this->_contact_data->www = $this->data->users_data_www;
+
+		$address = new Address();
+		$address->province = Regions::province($this->data->users_data_province);
+		$address->county = Regions::county($this->data->users_data_county);
+		$address->postal_code = $this->data->users_data_postal_code;
+		$address->city = $this->data->users_data_city;
+		$address->street = $this->data->users_data_street;
+
+		$this->_contact_data->address = $address;
+		
+		return $this->_contact_data;
+	}
+----------------------koniec modelu ------------------------------------
+----------------widok show.php ---------------------------
+<div class="miejscestopkaogloszenia">
+<strong><?php echo $announcement->annoucement_city ?></strong>
+</div>
+
+
+						<div class="od"><?php echo ___('Dodane o') ?>: <?php echo date("H:i", strtotime($announcement->annoucement_date_added)) ?><?php echo ', ' ?><?php echo dateV('j f Y', strtotime($announcement->annoucement_date_added)) ?></div>
+						<!-- <div class="do"><?php echo ___('announcements.show.date_availability') ?>:<?php echo date(' d.m.Y', strtotime($announcement->annoucement_availability)) ?></div> --><?php echo ___('id og&#322;oszenia') ?>:
+						
+						
+						
+						
+						
+						<?php echo $announcement->annoucement_id?>
+		
+						<?php
+						$annoucements = ORM::factory('annoucement')->find_all();
+ 
+foreach($annoucements as $a)
+{
+  echo '<div class="annoucement">';
+  echo '<h2>'.$a->title.'</h2>';
+  echo '<p>Autor ogłoszenia: '.$a->user->name.' | Kontakt: '.$a->user->email.'</p>';
+  echo '<div class="description">'.$a->description.'</div>';
+  echo '</div>';
+}
+						?>
+						
+						
+						</div>
+--------------------koniec widoku---------------------------
